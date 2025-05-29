@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: myntmore-transcriber
+    env: python
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg
+      pip install -r requirements.txt
+    startCommand: streamlit run app.py
+    envVars:
+      - key: ASSEMBLYAI_API_KEY
+        sync: false
+    plan: free
+    healthCheckPath: /
+    autoDeploy: true 
