@@ -5,6 +5,11 @@ import os
 import uuid
 import time
 import json
+import re
+import platform
+import shutil
+import requests
+import zipfile
 
 st.title("MyntMore Video Transcriber 🎬📝")
 
@@ -23,73 +28,109 @@ if video_source == "Instagram Reel":
 else:
     video_url = st.text_input("Paste YouTube Video URL:")
 
+def clean_instagram_url(url):
+    """Clean Instagram URL to remove tracking parameters"""
+    # Remove tracking parameters
+    url = re.sub(r'\?.*$', '', url)
+    # Ensure it's a proper Instagram URL
+    if not url.endswith('/'):
+        url += '/'
+    return url
+
 def download_video(url, output_file, is_instagram=False, max_retries=3):
     """Download video with specific options based on source"""
+    if is_instagram:
+        url = clean_instagram_url(url)
+        st.info(f"Cleaned URL: {url}")
+
     for attempt in range(max_retries):
         try:
             if is_instagram:
-                # Instagram specific options with additional parameters
-                command = [
-                    "yt-dlp",
-                    "--no-playlist",
-                    "--no-warnings",
-                    "--extractor-args", "instagram:logged_in=false",
-                    "--cookies-from-browser", "chrome",
-                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                    "--retries", "10",
-                    "--fragment-retries", "10",
-                    "--file-access-retries", "10",
-                    "--extractor-retries", "10",
-                    "--verbose",  # Add verbose output
-                    "--dump-json",  # Get video info
-                    "-f", "best[ext=mp4]/best",
-                    "-o", output_file,
-                    url
+                # Try different download methods for Instagram
+                methods = [
+                    # Method 1: Standard approach
+                    [
+                        "yt-dlp",
+                        "--no-playlist",
+                        "--no-warnings",
+                        "--extractor-args", "instagram:logged_in=false",
+                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                        "--retries", "10",
+                        "--fragment-retries", "10",
+                        "--file-access-retries", "10",
+                        "--extractor-retries", "10",
+                        "--verbose",
+                        "--no-check-certificate",
+                        "--add-header", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                        "--add-header", "Accept-Language: en-US,en;q=0.5",
+                        "--add-header", "Connection: keep-alive",
+                        "--add-header", "Upgrade-Insecure-Requests: 1",
+                        "-f", "best[ext=mp4]/best",
+                        "-o", output_file,
+                        url
+                    ],
+                    # Method 2: Alternative approach
+                    [
+                        "yt-dlp",
+                        "--no-playlist",
+                        "--no-warnings",
+                        "--extractor-args", "instagram:logged_in=false",
+                        "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1",
+                        "--retries", "10",
+                        "--fragment-retries", "10",
+                        "--file-access-retries", "10",
+                        "--extractor-retries", "10",
+                        "--verbose",
+                        "--no-check-certificate",
+                        "-f", "best[ext=mp4]/best",
+                        "-o", output_file,
+                        url
+                    ]
                 ]
+                
+                # Try each method until one works
+                for method_num, command in enumerate(methods, 1):
+                    st.info(f"Trying download method {method_num}...")
+                    try:
+                        result = subprocess.run(
+                            command,
+                            capture_output=True,
+                            text=True,
+                            check=True
+                        )
+                        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                            return True
+                    except subprocess.CalledProcessError as e:
+                        st.warning(f"Method {method_num} failed: {e.stderr}")
+                        continue
+                
+                st.error("All download methods failed")
+                return False
+                
             else:
                 # YouTube specific options
                 command = [
                     "yt-dlp",
                     "--no-playlist",
                     "--no-warnings",
-                    "--verbose",  # Add verbose output
-                    "--dump-json",  # Get video info
+                    "--verbose",
                     "-f", "best[ext=mp4]/best",
                     "-o", output_file,
                     url
                 ]
-            
-            # First try to get video info
-            info_command = command.copy()
-            info_command.insert(-2, "--skip-download")
-            info_result = subprocess.run(
-                info_command,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            # Parse video info
-            try:
-                video_info = json.loads(info_result.stdout)
-                st.info(f"Video title: {video_info.get('title', 'Unknown')}")
-                st.info(f"Duration: {video_info.get('duration', 'Unknown')} seconds")
-            except:
-                st.warning("Could not parse video information")
-            
-            # Now try to download
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                return True
-            else:
-                st.error("Download completed but file is empty or missing")
-                return False
+                
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                
+                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                    return True
+                else:
+                    st.error("Download completed but file is empty or missing")
+                    return False
             
         except subprocess.CalledProcessError as e:
             error_msg = e.stderr
@@ -113,6 +154,18 @@ def download_video(url, output_file, is_instagram=False, max_retries=3):
             return False
     
     return False
+
+def ensure_ffmpeg_local():
+    ffmpeg_dir = os.path.join(os.path.dirname(__file__), "ffmpeg", "bin")
+    ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    if not os.path.exists(ffmpeg_exe):
+        st.error("ffmpeg binary not found in repo. Please run get_ffmpeg.py first and upload ffmpeg/bin/ to your repo.")
+        st.stop()
+    os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+    return ffmpeg_exe
+
+# Ensure ffmpeg is available before any video/audio processing
+ensure_ffmpeg_local()
 
 if video_url and st.button("Transcribe Video"):
     with st.spinner("Downloading video..."):
