@@ -155,17 +155,28 @@ def download_video(url, output_file, is_instagram=False, max_retries=3):
     
     return False
 
-def ensure_ffmpeg_local():
+def ensure_ffmpeg():
+    """
+    Check if ffmpeg is available in PATH, if not, try to find it in the local repo folder.
+    This supports both Render deployment (ffmpeg in PATH) and local execution.
+    """
+    if shutil.which("ffmpeg"):
+        # ffmpeg is in PATH, which is the case on Render after installing it via packages.txt
+        return
+
+    # If not in PATH, check for local ffmpeg (for local development)
     ffmpeg_dir = os.path.join(os.path.dirname(__file__), "ffmpeg", "bin")
     ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
-    if not os.path.exists(ffmpeg_exe):
-        st.error("ffmpeg binary not found in repo. Please run get_ffmpeg.py first and upload ffmpeg/bin/ to your repo.")
+    
+    if os.path.exists(ffmpeg_exe):
+        # Add local ffmpeg to PATH
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+    else:
+        st.error("ffmpeg not found. On Render, add 'ffmpeg' to your packages.txt. For local use, place it in the 'ffmpeg/bin' directory.")
         st.stop()
-    os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-    return ffmpeg_exe
 
 # Ensure ffmpeg is available before any video/audio processing
-ensure_ffmpeg_local()
+ensure_ffmpeg()
 
 if video_url and st.button("Transcribe Video"):
     with st.spinner("Downloading video..."):

@@ -1,6 +1,6 @@
-streamlit==1.32.0
-openai-whisper==20231117
-yt-dlp==2024.3.10
-ffmpeg-python==0.2.0
-numpy>=1.20.0
-torch>=2.0.0
+streamlit
+openai-whisper
+requests
+yt-dlp
+numpy
+torch
