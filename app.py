@@ -23,6 +23,17 @@ model_size = st.selectbox(
     index=1  # Set 'small' as default (index 1)
 )
 
+# Add an expander for advanced options like cookies
+cookies = ""
+if video_source == "Instagram Reel":
+    with st.expander("Advanced Options (for Instagram issues)"):
+        cookies = st.text_area(
+            "Instagram Cookies",
+            placeholder="Paste your Instagram cookies here if you are facing download issues.",
+            help="To get cookies, use a browser extension like 'Cookie-Editor'. Export the cookies for 'instagram.com' in the Netscape format and paste the content here."
+        )
+        st.markdown("For more info on how to get cookies for yt-dlp, see [this guide](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp).")
+
 if video_source == "Instagram Reel":
     video_url = st.text_input("Paste Instagram Reel URL:")
 else:
@@ -37,55 +48,56 @@ def clean_instagram_url(url):
         url += '/'
     return url
 
-def download_video(url, output_file, is_instagram=False, max_retries=3):
+def download_video(url, output_file, is_instagram=False, max_retries=3, cookies=None):
     """Download video with specific options based on source"""
     if is_instagram:
         url = clean_instagram_url(url)
         st.info(f"Cleaned URL: {url}")
 
+    cookie_file = None
+    if is_instagram and cookies:
+        try:
+            # Create a temporary file to store cookies
+            cookie_file = f"cookies_{uuid.uuid4()}.txt"
+            with open(cookie_file, "w", encoding="utf-8") as f:
+                f.write(cookies)
+            st.info("Using provided cookies for download.")
+        except Exception as e:
+            st.warning(f"Could not create cookie file: {e}")
+            cookie_file = None
+
     for attempt in range(max_retries):
         try:
             if is_instagram:
+                # Base command parts
+                base_command = [
+                    "yt-dlp", "--no-playlist", "--no-warnings", "--retries", "10",
+                    "--fragment-retries", "10", "--file-access-retries", "10",
+                    "--extractor-retries", "10", "--verbose", "--no-check-certificate"
+                ]
+
+                if cookie_file:
+                    base_command.extend(["--cookies", cookie_file])
+                else:
+                    # If no cookies, we are not logged in
+                    base_command.extend(["--extractor-args", "instagram:logged_in=false"])
+                
+                common_end = ["-f", "best[ext=mp4]/best", "-o", output_file, url]
+
                 # Try different download methods for Instagram
                 methods = [
                     # Method 1: Standard approach
-                    [
-                        "yt-dlp",
-                        "--no-playlist",
-                        "--no-warnings",
-                        "--extractor-args", "instagram:logged_in=false",
+                    base_command + [
                         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                        "--retries", "10",
-                        "--fragment-retries", "10",
-                        "--file-access-retries", "10",
-                        "--extractor-retries", "10",
-                        "--verbose",
-                        "--no-check-certificate",
                         "--add-header", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                         "--add-header", "Accept-Language: en-US,en;q=0.5",
                         "--add-header", "Connection: keep-alive",
                         "--add-header", "Upgrade-Insecure-Requests: 1",
-                        "-f", "best[ext=mp4]/best",
-                        "-o", output_file,
-                        url
-                    ],
+                    ] + common_end,
                     # Method 2: Alternative approach
-                    [
-                        "yt-dlp",
-                        "--no-playlist",
-                        "--no-warnings",
-                        "--extractor-args", "instagram:logged_in=false",
+                    base_command + [
                         "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1",
-                        "--retries", "10",
-                        "--fragment-retries", "10",
-                        "--file-access-retries", "10",
-                        "--extractor-retries", "10",
-                        "--verbose",
-                        "--no-check-certificate",
-                        "-f", "best[ext=mp4]/best",
-                        "-o", output_file,
-                        url
-                    ]
+                    ] + common_end
                 ]
                 
                 # Try each method until one works
@@ -96,15 +108,21 @@ def download_video(url, output_file, is_instagram=False, max_retries=3):
                             command,
                             capture_output=True,
                             text=True,
-                            check=True
+                            check=True,
+                            encoding='utf-8',
+                            errors='replace'
                         )
                         if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                            if cookie_file and os.path.exists(cookie_file):
+                                os.remove(cookie_file)
                             return True
                     except subprocess.CalledProcessError as e:
                         st.warning(f"Method {method_num} failed: {e.stderr}")
                         continue
                 
                 st.error("All download methods failed")
+                if cookie_file and os.path.exists(cookie_file):
+                    os.remove(cookie_file)
                 return False
                 
             else:
@@ -143,16 +161,20 @@ def download_video(url, output_file, is_instagram=False, max_retries=3):
                 continue
             elif "Video unavailable" in error_msg:
                 st.error("This video is unavailable. It might be private or deleted.")
-            elif "Sign in" in error_msg:
-                st.error("This video requires authentication. Please use a public video.")
+            elif "Sign in" in error_msg or "login required" in error_msg:
+                st.error("This video requires authentication. Please use the 'Advanced Options' to provide your Instagram cookies.")
             elif "Unable to download webpage" in error_msg:
                 st.error("Could not access the video. Please check if the URL is correct and the video is public.")
             return False
             
         except Exception as e:
             st.error(f"An unexpected error occurred: {str(e)}")
+            if cookie_file and os.path.exists(cookie_file):
+                os.remove(cookie_file)
             return False
     
+    if cookie_file and os.path.exists(cookie_file):
+        os.remove(cookie_file)
     return False
 
 def ensure_ffmpeg():
@@ -185,7 +207,7 @@ if video_url and st.button("Transcribe Video"):
         
         # Download the video
         is_instagram = video_source == "Instagram Reel"
-        if not download_video(video_url, output_file, is_instagram):
+        if not download_video(video_url, output_file, is_instagram, cookies=cookies):
             st.error("Failed to download the video. Please check the URL and try again.")
             st.stop()
 
